@@ -1,0 +1,12 @@
+google-genai
+chromadb
+langchain
+langchain-google-genai
+fastapi
+uvicorn
+streamlit
+yfinance
+pandas
+requests
+python-dotenv
+plotly
