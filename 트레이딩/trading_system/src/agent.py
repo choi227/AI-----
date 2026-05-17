@@ -1,5 +1,6 @@
 from google import genai
 import os
+import time
 from dotenv import load_dotenv
 from rag import get_market_context, store_market_summaries
 from processor import calculate_indicators, summarize_for_llm
@@ -9,16 +10,23 @@ load_dotenv()
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
-def _ask_gemini(prompt: str) -> str:
-    """Gemini API 호출 공통 함수"""
-    try:
-        response = client.models.generate_content(
-            model="gemini-flash-latest",
-            contents=prompt,
-        )
-        return response.text.strip()
-    except Exception as e:
-        return f"[AI 응답 오류] {e}"
+def _ask_gemini(prompt: str, retries: int = 3) -> str:
+    """Gemini API 호출 — 429 발생 시 최대 3회 재시도"""
+    for attempt in range(retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=prompt,
+            )
+            return response.text.strip()
+        except Exception as e:
+            err = str(e)
+            if "429" in err and attempt < retries - 1:
+                wait = 60 * (attempt + 1)  # 60초, 120초 순으로 대기
+                print(f"[429 Rate Limit] {wait}초 대기 후 재시도 ({attempt + 1}/{retries - 1})")
+                time.sleep(wait)
+            else:
+                return f"[AI 응답 오류] {e}"
 
 
 # ──────────────────────────────────────────────

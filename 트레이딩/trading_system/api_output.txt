@@ -1,0 +1,21 @@
+INFO:     127.0.0.1:58909 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58914 - "GET /symbols HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58916 - "GET /prices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52051 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52051 - "GET /openapi.json HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61838 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61377 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50327 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50327 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52889 - "GET /prices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65226 - "GET /prices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65226 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55056 - "GET /signal/NVDA HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61712 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54042 - "GET /prices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54048 - "GET /prices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50680 - "GET /strategy/NVDA HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63985 - "GET /prices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63988 - "GET /prices HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61589 - "GET /strategy/000660.KS HTTP/1.1" 200 OK
+    

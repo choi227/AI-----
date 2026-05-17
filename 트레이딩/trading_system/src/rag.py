@@ -1,7 +1,7 @@
 import chromadb
 import os
 from processor import process_all, summarize_for_llm, calculate_indicators
-from collector import load_stock_data, SYMBOLS
+from collector import load_stock_data, get_news, SYMBOLS
 
 DB_DIR = os.path.join(os.path.dirname(__file__), "..", "database")
 
@@ -46,7 +46,53 @@ def store_market_summaries():
         stored_count += 1
         print(f"  [OK] {SYMBOLS.get(symbol, symbol)} ({symbol}) - {date_str}")
 
-    print(f"\n[완료] {stored_count}개 문서 저장")
+    # 뉴스도 함께 저장
+    news_count = store_news_all()
+    stored_count += news_count
+
+    print(f"\n[완료] 총 {stored_count}개 문서 저장 (시장요약 + 뉴스)")
+    return stored_count
+
+
+def store_news_all() -> int:
+    """전체 종목 최신 뉴스를 Vector DB에 저장"""
+    collection = get_collection()
+    stored_count = 0
+
+    print("\n[뉴스 저장 시작]")
+
+    for symbol in SYMBOLS:
+        news_list = get_news(symbol, max_items=10)
+
+        for i, news in enumerate(news_list):
+            if "error" in news or not news.get("title"):
+                continue
+
+            doc_id  = f"news_{symbol}_{i}"
+            content = (
+                f"[뉴스] {SYMBOLS.get(symbol, symbol)} ({symbol})\n"
+                f"제목: {news['title']}\n"
+                f"출처: {news['publisher']}\n"
+                f"시간: {news['pub_time']}"
+            )
+
+            collection.upsert(
+                documents=[content],
+                ids=[doc_id],
+                metadatas=[{
+                    "symbol":    symbol,
+                    "name":      SYMBOLS.get(symbol, symbol),
+                    "type":      "news",
+                    "pub_time":  news["pub_time"],
+                    "publisher": news["publisher"],
+                    "link":      news["link"],
+                }]
+            )
+            stored_count += 1
+
+        if news_list and "error" not in news_list[0]:
+            print(f"  [OK] {SYMBOLS.get(symbol, symbol)} ({symbol}) - {len(news_list)}건")
+
     return stored_count
 
 

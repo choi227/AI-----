@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
-from collector import load_stock_data, SYMBOLS
+from collector import load_stock_data, get_fundamentals, SYMBOLS
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
@@ -10,12 +10,10 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """주가 데이터에 기술 지표 추가"""
     df = df.copy()
 
-    # 이동평균선
     df["MA5"]  = df["Close"].rolling(window=5).mean()
     df["MA20"] = df["Close"].rolling(window=20).mean()
     df["MA60"] = df["Close"].rolling(window=60).mean()
 
-    # RSI (14일)
     delta = df["Close"].diff()
     gain  = delta.clip(lower=0)
     loss  = -delta.clip(upper=0)
@@ -24,23 +22,100 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     rs = avg_gain / avg_loss.replace(0, np.nan)
     df["RSI"] = 100 - (100 / (1 + rs))
 
-    # 볼린저 밴드 (20일, 2 표준편차)
     df["BB_mid"]   = df["Close"].rolling(window=20).mean()
     df["BB_upper"] = df["BB_mid"] + 2 * df["Close"].rolling(window=20).std()
     df["BB_lower"] = df["BB_mid"] - 2 * df["Close"].rolling(window=20).std()
 
-    # 거래량 이동평균
     df["Volume_MA20"] = df["Volume"].rolling(window=20).mean()
 
     return df
 
 
+def summarize_fundamentals(symbol: str) -> str:
+    """펀더멘털 데이터를 LLM이 읽을 수 있는 텍스트로 변환"""
+    f = get_fundamentals(symbol)
+
+    if "error" in f:
+        return f"[펀더멘털] 데이터 수집 실패: {f['error']}"
+
+    def fmt_pct(v):
+        return f"{v*100:.1f}%" if v is not None else "N/A"
+
+    def fmt_num(v, decimals=2):
+        return f"{v:,.{decimals}f}" if v is not None else "N/A"
+
+    def fmt_cap(v):
+        if v is None:
+            return "N/A"
+        if v >= 1e12:
+            return f"{v/1e12:.2f}조 달러"
+        if v >= 1e9:
+            return f"{v/1e9:.1f}십억 달러"
+        return f"{v:,.0f}"
+
+    per = f.get("per")
+    if per is None:
+        per_signal = "PER 데이터 없음"
+    elif per < 15:
+        per_signal = f"저평가 구간 (PER {per:.1f})"
+    elif per > 40:
+        per_signal = f"고평가 구간 (PER {per:.1f}) - 성장 기대 반영"
+    else:
+        per_signal = f"적정 구간 (PER {per:.1f})"
+
+    high = f.get("week52_high")
+    low  = f.get("week52_low")
+    if high and low and high != low:
+        close_data = load_stock_data()
+        if symbol in close_data:
+            current = float(close_data[symbol].iloc[-1]["Close"])
+            pct_from_high = (current - high) / high * 100
+            pct_from_low  = (current - low)  / low  * 100
+            week52_signal = (
+                f"52주 고가 대비 {pct_from_high:.1f}% / "
+                f"52주 저가 대비 +{pct_from_low:.1f}%"
+            )
+        else:
+            week52_signal = f"고가 {fmt_num(high)} / 저가 {fmt_num(low)}"
+    else:
+        week52_signal = "N/A"
+
+    return f"""
+[펀더멘털 분석]
+시가총액: {fmt_cap(f.get('market_cap'))}
+베타(변동성): {fmt_num(f.get('beta'))}
+
+[밸류에이션]
+{per_signal}
+선행 PER: {fmt_num(f.get('forward_per'))}
+PBR: {fmt_num(f.get('pbr'))}
+EPS: {fmt_num(f.get('eps'))}
+
+[수익성]
+ROE: {fmt_pct(f.get('roe'))}
+매출총이익률: {fmt_pct(f.get('gross_margin'))}
+영업이익률: {fmt_pct(f.get('operating_margin'))}
+순이익률: {fmt_pct(f.get('profit_margin'))}
+
+[성장성]
+매출 성장률(YoY): {fmt_pct(f.get('revenue_growth'))}
+이익 성장률(YoY): {fmt_pct(f.get('earnings_growth'))}
+
+[재무 안정성]
+부채비율(D/E): {fmt_num(f.get('debt_to_equity'))}
+유동비율: {fmt_num(f.get('current_ratio'))}
+
+[52주 가격 범위]
+{week52_signal}
+배당 수익률: {fmt_pct(f.get('dividend_yield'))}
+""".strip()
+
+
 def summarize_for_llm(symbol: str, df: pd.DataFrame) -> str:
-    """최신 지표를 LLM이 읽을 수 있는 텍스트로 변환"""
+    """기술 지표 + 펀더멘털을 LLM이 읽을 수 있는 텍스트로 변환"""
     latest = df.iloc[-1]
     name   = SYMBOLS.get(symbol, symbol)
 
-    # 추세 판단 (MA20 NaN 대비)
     if pd.isna(latest["MA20"]):
         trend = "추세 판단 불가 (데이터 부족)"
     elif latest["Close"] > latest["MA20"]:
@@ -48,7 +123,6 @@ def summarize_for_llm(symbol: str, df: pd.DataFrame) -> str:
     else:
         trend = "하락 추세 (현재가 < 20일 이동평균)"
 
-    # RSI 해석 (NaN 대비)
     rsi = latest["RSI"]
     if pd.isna(rsi):
         rsi_signal = "RSI 계산 불가 (데이터 부족)"
@@ -59,7 +133,6 @@ def summarize_for_llm(symbol: str, df: pd.DataFrame) -> str:
     else:
         rsi_signal = f"중립 구간 ({rsi:.1f})"
 
-    # 볼린저 밴드 위치 (NaN 대비)
     close = latest["Close"]
     if pd.isna(latest["BB_upper"]):
         bb_signal = "볼린저 밴드 계산 불가 (데이터 부족)"
@@ -70,7 +143,6 @@ def summarize_for_llm(symbol: str, df: pd.DataFrame) -> str:
     else:
         bb_signal = "볼린저 밴드 중간 구간"
 
-    # 거래량 분석 (NaN 대비)
     if pd.isna(latest["Volume_MA20"]) or latest["Volume_MA20"] == 0:
         vol_signal = "거래량 분석 불가 (데이터 부족)"
     else:
@@ -82,7 +154,7 @@ def summarize_for_llm(symbol: str, df: pd.DataFrame) -> str:
         else:
             vol_signal = f"거래량 보통 ({vol_ratio:.1f}배)"
 
-    summary = f"""
+    technical = f"""
 [{name} ({symbol}) 시장 분석 요약]
 기준일: {df.index[-1].strftime('%Y-%m-%d')}
 현재가: {close:,.2f}
@@ -107,7 +179,7 @@ def summarize_for_llm(symbol: str, df: pd.DataFrame) -> str:
 {vol_signal}
 """.strip()
 
-    return summary
+    return technical + "\n\n" + summarize_fundamentals(symbol)
 
 
 def process_all() -> dict[str, pd.DataFrame]:
