@@ -16,6 +16,27 @@ SYMBOLS = {
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
+_SENT_POS = {
+    "beat", "record", "growth", "strong", "upgrade", "buy", "outperform",
+    "rally", "surge", "profit", "gain", "rise", "bullish", "positive",
+    "success", "expand", "improve", "exceed", "robust", "boost", "high",
+}
+_SENT_NEG = {
+    "miss", "decline", "loss", "downgrade", "sell", "underperform", "cut",
+    "warning", "concern", "risk", "fall", "drop", "bearish", "negative",
+    "weak", "reduce", "decrease", "lower", "disappointing", "recession",
+}
+
+
+def _analyze_sentiment(text: str) -> dict:
+    words = set(text.lower().split())
+    pos = len(words & _SENT_POS)
+    neg = len(words & _SENT_NEG)
+    total = pos + neg
+    score = round((pos - neg) / total, 2) if total else 0.0
+    label = "긍정" if score > 0.15 else ("부정" if score < -0.15 else "중립")
+    return {"score": score, "label": label}
+
 
 def collect_stock_data(period: str = "5y") -> dict[str, pd.DataFrame]:
     """
@@ -135,6 +156,7 @@ def get_news(symbol: str, max_items: int = 10) -> list[dict]:
                 "link":      link,
                 "pub_time":  pub_time,
                 "symbol":    symbol,
+                "sentiment": _analyze_sentiment(title),
             })
 
     return result

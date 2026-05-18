@@ -9,10 +9,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+import pandas as pd
 
 from collector import load_stock_data, collect_stock_data, get_fundamentals, get_news, SYMBOLS
 from rag import store_market_summaries
 from agent import signal_agent, risk_agent, strategy_agent, chat_agent
+from processor import calculate_indicators, price_forecast
+from backtest import run_backtest
 
 last_collected: Optional[datetime] = None
 
@@ -246,6 +249,76 @@ def get_news_data(symbol: str, max_items: int = 10):
     symbol = _validate_symbol(symbol)
     news = get_news(symbol, max_items=max_items)
     return {"symbol": symbol, "name": SYMBOLS.get(symbol, symbol), "news": news}
+
+
+@app.get("/backtest/{symbol}", tags=["AI 분석"])
+def get_backtest(symbol: str):
+    """
+    MA5/MA20 골든크로스 전략 백테스팅
+
+    5년치 과거 데이터 기반 — 전략 수익률 / 매수보유 수익률 / 승률 / 최대 낙폭 반환
+    """
+    symbol = _validate_symbol(symbol)
+    _check_data(symbol)
+    data = load_stock_data()
+    df = calculate_indicators(data[symbol])
+    return run_backtest(symbol, df)
+
+
+@app.get("/compare", tags=["종목"])
+def get_compare():
+    """전체 종목 수익률 비교 및 상관관계 매트릭스"""
+    data = load_stock_data()
+    if not data:
+        raise HTTPException(status_code=503, detail="데이터가 없습니다.")
+
+    performance = []
+    for symbol, df in data.items():
+        if df.empty or len(df) < 30:
+            continue
+        close = df["Close"].dropna()
+        current = float(close.iloc[-1])
+
+        def ret(days, c=close, cur=current):
+            if len(c) >= days:
+                prev = float(c.iloc[-days])
+                return round((cur - prev) / prev * 100, 1) if prev else None
+            return None
+
+        performance.append({
+            "symbol":        symbol,
+            "name":          SYMBOLS.get(symbol, symbol),
+            "current_price": round(current, 2),
+            "return_1w":     ret(5),
+            "return_1m":     ret(21),
+            "return_3m":     ret(63),
+            "return_1y":     ret(252),
+        })
+
+    close_df = pd.DataFrame({sym: df["Close"] for sym, df in data.items() if not df.empty})
+    returns_df = close_df.pct_change()
+    corr = returns_df.corr().round(3)
+
+    corr_data = {
+        s1: {s2: (float(corr.loc[s1, s2]) if not pd.isna(corr.loc[s1, s2]) else None) for s2 in corr.columns}
+        for s1 in corr.index
+    }
+
+    return {"performance": performance, "correlation": corr_data}
+
+
+@app.get("/forecast/{symbol}", tags=["AI 분석"])
+def get_forecast(symbol: str):
+    """
+    30일 주가 예측 (몬테카를로 시뮬레이션 10,000회)
+
+    과거 변동성 기반 통계 모델 — 상승/중립/하락 시나리오별 예상 가격 및 확률 반환
+    """
+    symbol = _validate_symbol(symbol)
+    _check_data(symbol)
+    data = load_stock_data()
+    df = calculate_indicators(data[symbol])
+    return price_forecast(symbol, df)
 
 
 @app.post("/chat", response_model=ChatResponse, tags=["챗봇"])

@@ -182,6 +182,46 @@ def summarize_for_llm(symbol: str, df: pd.DataFrame) -> str:
     return technical + "\n\n" + summarize_fundamentals(symbol)
 
 
+def price_forecast(symbol: str, df: pd.DataFrame, days: int = 30, simulations: int = 10000) -> dict:
+    """몬테카를로 시뮬레이션 기반 주가 예측 (상승/중립/하락 시나리오)"""
+    closes = df["Close"].dropna()
+    if len(closes) < 60:
+        return {"error": "데이터 부족 (최소 60일 필요)"}
+
+    log_returns = np.log(closes / closes.shift(1)).dropna()
+    mu    = float(log_returns.mean())
+    sigma = float(log_returns.std())
+    current_price = float(closes.iloc[-1])
+
+    np.random.seed(42)
+    random_shocks = np.random.normal(mu, sigma, (simulations, days))
+    final_prices  = current_price * np.exp(np.sum(random_shocks, axis=1))
+
+    p30 = float(np.percentile(final_prices, 30))
+    p70 = float(np.percentile(final_prices, 70))
+
+    bear = final_prices[final_prices <= p30]
+    base = final_prices[(final_prices > p30) & (final_prices < p70)]
+    bull = final_prices[final_prices >= p70]
+
+    def chg(v):
+        return round((float(v) - current_price) / current_price * 100, 1)
+
+    return {
+        "symbol": symbol,
+        "name": SYMBOLS.get(symbol, symbol),
+        "current_price": round(current_price, 2),
+        "days": days,
+        "simulations": simulations,
+        "scenarios": [
+            {"label": "상승", "price": round(float(np.mean(bull)), 2), "change_pct": chg(np.mean(bull)), "probability": round(len(bull) / simulations * 100, 1)},
+            {"label": "중립", "price": round(float(np.mean(base)), 2), "change_pct": chg(np.mean(base)), "probability": round(len(base) / simulations * 100, 1)},
+            {"label": "하락", "price": round(float(np.mean(bear)), 2), "change_pct": chg(np.mean(bear)), "probability": round(len(bear) / simulations * 100, 1)},
+        ],
+        "distribution": [round(float(p), 2) for p in final_prices[::10].tolist()],
+    }
+
+
 def process_all() -> dict[str, pd.DataFrame]:
     """전체 종목 지표 계산 및 CSV 저장"""
     data = load_stock_data()

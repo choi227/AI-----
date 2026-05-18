@@ -137,7 +137,7 @@ st.markdown("---")
 
 # ── 탭 구성 ──────────────────────────────────
 
-tab_chart, tab_fundamental, tab_news, tab_ai, tab_chat = st.tabs(["📊 주가 차트", "📋 펀더멘털", "📰 뉴스", "🤖 AI 분석", "💬 챗봇"])
+tab_chart, tab_fundamental, tab_news, tab_compare, tab_ai, tab_chat = st.tabs(["📊 주가 차트", "📋 펀더멘털", "📰 뉴스", "🔍 비교 분석", "🤖 AI 분석", "💬 챗봇"])
 
 
 # ── 탭 1: 주가 차트 ──────────────────────────
@@ -386,20 +386,83 @@ with tab_news:
             st.markdown("---")
 
             for news in valid_news:
+                sent = news.get("sentiment", {})
+                sent_label = sent.get("label", "중립")
+                sent_icon  = {"긍정": "🟢", "부정": "🔴", "중립": "⚪"}.get(sent_label, "⚪")
+
                 with st.container():
-                    col1, col2 = st.columns([5, 1])
+                    col1, col2, col3 = st.columns([4, 1, 1])
                     with col1:
                         if news.get("link"):
                             st.markdown(f"**[{news['title']}]({news['link']})**")
                         else:
                             st.markdown(f"**{news['title']}**")
                     with col2:
+                        st.markdown(f"{sent_icon} **{sent_label}**")
+                    with col3:
                         st.caption(news.get("pub_time", ""))
 
                     st.caption(f"출처: {news.get('publisher', 'N/A')}")
                     st.markdown("---")
     else:
         st.info("뉴스를 불러올 수 없습니다.")
+
+
+# ── 탭 4: 비교 분석 ────────────────────────────
+
+with tab_compare:
+    st.subheader("반도체 섹터 비교 분석")
+
+    compare_data = api_get("/compare")
+
+    if compare_data and compare_data.get("performance"):
+        perf = compare_data["performance"]
+
+        # ── 수익률 히트맵 ──
+        st.markdown("#### 기간별 수익률 (%)")
+
+        names   = [p["name"] for p in perf]
+        periods = ["1주", "1개월", "3개월", "1년"]
+        keys    = ["return_1w", "return_1m", "return_3m", "return_1y"]
+
+        z    = [[p.get(k) or 0 for k in keys] for p in perf]
+        text = [[f"{p.get(k):+.1f}%" if p.get(k) is not None else "N/A" for k in keys] for p in perf]
+
+        fig_heat = go.Figure(go.Heatmap(
+            z=z, x=periods, y=names,
+            text=text, texttemplate="%{text}",
+            colorscale="RdYlGn", zmid=0,
+            colorbar=dict(title="%"),
+        ))
+        fig_heat.update_layout(height=320, margin=dict(l=0, r=0, t=10, b=0))
+        st.plotly_chart(fig_heat, use_container_width=True)
+
+        st.markdown("---")
+
+        # ── 상관관계 매트릭스 ──
+        corr_data = compare_data.get("correlation", {})
+        if corr_data:
+            st.markdown("#### 종목 간 상관관계")
+            st.caption("1에 가까울수록 함께 움직이는 경향이 강합니다.")
+
+            sym_keys  = list(corr_data.keys())
+            sym_names = [SYMBOLS.get(s, s) for s in sym_keys]
+            z_corr    = [[corr_data[s1].get(s2) or 0 for s2 in sym_keys] for s1 in sym_keys]
+            text_corr = [
+                [f"{corr_data[s1].get(s2):.2f}" if corr_data[s1].get(s2) is not None else "" for s2 in sym_keys]
+                for s1 in sym_keys
+            ]
+
+            fig_corr = go.Figure(go.Heatmap(
+                z=z_corr, x=sym_names, y=sym_names,
+                text=text_corr, texttemplate="%{text}",
+                colorscale="Blues", zmin=0, zmax=1,
+                colorbar=dict(title="상관계수"),
+            ))
+            fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_corr, use_container_width=True)
+    else:
+        st.info("데이터를 불러올 수 없습니다. 사이드바에서 🔄 데이터 수집을 먼저 실행하세요.")
 
 
 # ── 탭 4: AI 분석 ──────────────────────────────
@@ -457,6 +520,106 @@ with tab_ai:
 
     else:
         st.info("왼쪽 사이드바에서 종목을 선택하고 **AI 분석 실행** 버튼을 클릭하세요.")
+
+    # ── 30일 주가 예측 ──────────────────────────
+    st.markdown("---")
+    st.subheader("📊 30일 주가 예측")
+    st.caption("⚠️ 과거 변동성 기반 통계 모델입니다. 실제 미래 가격을 보장하지 않습니다.")
+
+    forecast_data = api_get(f"/forecast/{selected_symbol}")
+
+    if forecast_data and "scenarios" in forecast_data:
+        current = forecast_data["current_price"]
+        st.markdown(
+            f"**현재가** `{current:,.2f}` &nbsp;|&nbsp; "
+            f"**예측 기간** {forecast_data['days']}일 &nbsp;|&nbsp; "
+            f"**시뮬레이션** {forecast_data['simulations']:,}회"
+        )
+        st.markdown("")
+
+        cols = st.columns(3)
+        scenario_styles = [("buy", "📈"), ("hold", "➡️"), ("sell", "📉")]
+
+        for col, scenario, (css, emoji) in zip(cols, forecast_data["scenarios"], scenario_styles):
+            with col:
+                sign = "+" if scenario["change_pct"] >= 0 else ""
+                st.markdown(
+                    f'<div class="signal-box {css}" style="font-size:1rem; padding:14px;">'
+                    f'{emoji} <b>{scenario["label"]} 시나리오</b><br>'
+                    f'<span style="font-size:1.6rem; font-weight:bold;">{scenario["price"]:,.2f}</span><br>'
+                    f'<span>{sign}{scenario["change_pct"]}%</span><br>'
+                    f'<small>확률 {scenario["probability"]}%</small>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        if forecast_data.get("distribution"):
+            dist = forecast_data["distribution"]
+            fig_dist = go.Figure()
+            fig_dist.add_trace(go.Histogram(
+                x=dist,
+                nbinsx=60,
+                marker_color="#42A5F5",
+                opacity=0.75,
+            ))
+            fig_dist.add_vline(
+                x=current,
+                line_dash="dash",
+                line_color="orange",
+                line_width=2,
+                annotation_text=f"현재가 {current:,.2f}",
+                annotation_position="top right",
+            )
+            fig_dist.update_layout(
+                height=240,
+                margin=dict(l=0, r=0, t=30, b=0),
+                xaxis_title="30일 후 예상 가격",
+                yaxis_title="빈도",
+                showlegend=False,
+            )
+            st.plotly_chart(fig_dist, use_container_width=True)
+
+    elif forecast_data and "error" in forecast_data:
+        st.warning(forecast_data["error"])
+
+    # ── 백테스팅 ───────────────────────────────
+    st.markdown("---")
+    st.subheader("📈 백테스팅 결과")
+    st.caption("MA5/MA20 골든크로스 전략을 5년치 과거 데이터에 적용한 시뮬레이션입니다.")
+
+    bt_data = api_get(f"/backtest/{selected_symbol}")
+
+    if bt_data and "equity_curve" in bt_data:
+        c1, c2, c3, c4 = st.columns(4)
+        str_ret = bt_data["strategy_return"]
+        bh_ret  = bt_data["buyhold_return"]
+        diff    = round(str_ret - bh_ret, 1)
+        c1.metric("전략 수익률", f"{str_ret:+.1f}%", f"매수보유 대비 {diff:+.1f}%")
+        c2.metric("승률", f"{bt_data['win_rate']}%", f"총 {bt_data['total_trades']}회 거래")
+        c3.metric("최대 낙폭", f"{bt_data['max_drawdown']:.1f}%")
+        c4.metric("매수보유 수익률", f"{bh_ret:+.1f}%")
+
+        eq = bt_data["equity_curve"]
+        fig_bt = go.Figure()
+        fig_bt.add_trace(go.Scatter(
+            x=[e["date"] for e in eq], y=[e["strategy"] for e in eq],
+            name="골든크로스 전략", line=dict(color="#42A5F5", width=2),
+        ))
+        fig_bt.add_trace(go.Scatter(
+            x=[e["date"] for e in eq], y=[e["buy_hold"] for e in eq],
+            name="매수보유", line=dict(color="#78909C", width=1.5, dash="dot"),
+        ))
+        fig_bt.add_hline(y=1.0, line_dash="dash", line_color="gray", line_width=0.8)
+        fig_bt.update_layout(
+            height=280,
+            margin=dict(l=0, r=0, t=30, b=0),
+            yaxis_title="누적 수익 배수 (시작=1)",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_bt, use_container_width=True)
+
+    elif bt_data and "error" in bt_data:
+        st.warning(bt_data["error"])
 
 
 # ── 탭 3: 챗봇 ───────────────────────────────
